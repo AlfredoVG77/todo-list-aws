@@ -116,49 +116,56 @@ pipeline {
             }
         }
 
-        stage('Promote to master') {
-            steps {
-                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
-                    sh '''
-                        echo "=== Actualizando develop ==="
+stage('Promote to master') {
+    steps {
+        withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+            sh '''
+                echo "=== Actualizando develop ==="
 
-                        git config user.email "jenkins@ci"
-                        git config user.name "Jenkins CI"
+                git config user.email "jenkins@ci"
+                git config user.name "Jenkins CI"
 
-                        git checkout develop
+                git checkout develop
 
-                        LAST_VERSION=$(grep -oP '^## \\[\\K[0-9]+\\.[0-9]+\\.[0-9]+' CHANGELOG.md | head -n 1)
-                        NEW_VERSION=$(echo $LAST_VERSION | awk -F. '{$NF+=1; OFS="."; print}')
-                        TODAY=$(date +%Y-%m-%d)
+                LAST_VERSION=$(grep -oP '^## \\[\\K[0-9]+\\.[0-9]+\\.[0-9]+' CHANGELOG.md | head -n 1)
+                NEW_VERSION=$(echo $LAST_VERSION | awk -F. '{$NF+=1; OFS="."; print}')
+                TODAY=$(date +%Y-%m-%d)
 
-                        awk -v ver="$NEW_VERSION" -v date="$TODAY" '
-                            NR==1 {print; print ""; print "## [" ver "] - " date; print "### Changed"; print "- Actualización automática en develop."; next}
-                            {print}
-                        ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+                awk -v ver="$NEW_VERSION" -v date="$TODAY" '
+                    NR==1 {print; print ""; print "## [" ver "] - " date; print "### Changed"; print "- Actualización automática en develop."; next}
+                    {print}
+                ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
 
-                        git add CHANGELOG.md
-                        git commit -m "Update CHANGELOG in develop - version $NEW_VERSION" || true
+                git add CHANGELOG.md
+                git commit -m "Update CHANGELOG in develop - version $NEW_VERSION" || true
 
-                        git remote set-url origin https://AlfredoVG77:${GITHUB_TOKEN}@github.com/AlfredoVG77/cp1-4-res.git
-                        git push origin develop
+                git remote set-url origin https://AlfredoVG77:${GITHUB_TOKEN}@github.com/AlfredoVG77/cp1-4-res.git
+                git push origin develop
 
-                        echo "=== Promocionando a master ==="
+                echo "=== Promocionando a master ==="
 
-                        git fetch origin master
-                        git checkout master
-                        
-                        # Mantener Jenkinsfile de master
-			git rm --cached Jenkinsfile
-                        git checkout origin/master -- Jenkinsfile
+                git fetch origin master
+                git checkout master
 
-                        git merge origin/develop
+                # 1. Eliminar Jenkinsfile del índice y COMMIT
+                git rm --cached Jenkinsfile || true
+                git commit -m "Preparar merge: excluir Jenkinsfile" || true
 
-                        git commit -m "Promoción a master - versión $NEW_VERSION" || true
-                        git push origin master
-                    '''
-                }
-            }
-        }
+                # 2. Restaurar Jenkinsfile de master
+                git checkout origin/master -- Jenkinsfile
 
+                # 3. Merge sin conflictos
+                git merge origin/develop --no-edit
+
+                # 4. Restaurar Jenkinsfile de master por seguridad
+                git checkout origin/master -- Jenkinsfile
+                git add Jenkinsfile
+                git commit -m "Mantener Jenkinsfile de master" || true
+
+                git push origin master
+            '''
+       		 }
+	    }
+	}
     }
 }
