@@ -1,0 +1,164 @@
+pipeline {
+
+    agent any
+
+    options {
+        skipStagesAfterUnstable()
+    }
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                deleteDir()
+
+                sh '''
+                    whoami
+                    hostname
+                '''
+
+                git branch: 'develop', url: 'https://github.com/AlfredoVG77/cp1-4-res.git'
+
+                stash name: 'code', includes: '**/*'
+            }
+        }
+
+        stage('Static Test') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+
+                    unstash 'code'
+
+                    sh '''
+                        whoami
+                        hostname
+                    '''
+
+                    //
+                    // FLAKE8
+                    //
+                    sh '''
+                        . /var/lib/jenkins/venv/bin/activate
+
+                        echo "# flake8 report" > flake8.out
+                        python -m flake8 --format=pylint src >> flake8.out
+
+                        echo "=== FLAKE8 OUT ==="
+                        ls -l flake8.out
+                        cat flake8.out
+                    '''
+
+                    recordIssues(
+                        tools: [flake8(pattern: 'flake8.out')]
+                    )
+
+                    stash name: 'flake8-res', includes: 'flake8.out'
+
+
+                    //
+                    // BANDIT (formato pylint compatible)
+                    //
+                    sh '''
+                        . /var/lib/jenkins/venv/bin/activate
+
+                        python -m bandit  -r src -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+
+                        echo "=== BANDIT OUT ==="
+                        ls -l bandit.out
+                        cat bandit.out
+                    '''
+
+                    recordIssues(
+                        tools: [pyLint(pattern: 'bandit.out')]
+                    )
+
+                    stash name: 'bandit-res', includes: 'bandit.out'
+                }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            steps {
+                unstash 'code'
+
+                sh '''
+                    echo '=== SAM BUILD ==='
+                    sam build --template-file template.yaml
+                    sam validate --region us-east-1
+
+                    echo '=== SAM DEPLOY TO STAGING ==='
+                    sam deploy --stack-name todo-list-aws-staging --region us-east-1 --capabilities CAPABILITY_IAM --resolve-s3 --s3-prefix todo-list-aws --parameter-overrides Stage=staging --no-fail-on-empty-changeset --no-confirm-changeset || true
+                '''
+            }
+        }
+
+        stage('API Tests') {
+            steps {
+
+                unstash 'code'
+
+                sh '''
+                    whoami
+                    hostname
+
+                    echo "=== Obteniendo URL de la API desde CloudFormation ==="
+                    BASE_URL=$(aws cloudformation describe-stacks --stack-name todo-list-aws-staging --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" --region us-east-1 --output text)
+
+                    echo "=== Ejecutando tests de integración ==="
+
+                    . /var/lib/jenkins/venv/bin/activate
+                    export BASE_URL="$BASE_URL"
+
+                    pytest test/integration/todoApiTest.py --junitxml=api-tests.xml -q --disable-warnings --maxfail=1
+                '''
+
+                junit 'api-tests.xml'
+            }
+        }
+
+        stage('Promote to master') {
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        echo "=== Actualizando develop ==="
+
+                        git config user.email "jenkins@ci"
+                        git config user.name "Jenkins CI"
+
+                        git checkout develop
+
+                        LAST_VERSION=$(grep -oP '^## \\[\\K[0-9]+\\.[0-9]+\\.[0-9]+' CHANGELOG.md | head -n 1)
+                        NEW_VERSION=$(echo $LAST_VERSION | awk -F. '{$NF+=1; OFS="."; print}')
+                        TODAY=$(date +%Y-%m-%d)
+
+                        awk -v ver="$NEW_VERSION" -v date="$TODAY" '
+                            NR==1 {print; print ""; print "## [" ver "] - " date; print "### Changed"; print "- Actualización automática en develop."; next}
+                            {print}
+                        ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+
+                        git add CHANGELOG.md
+                        git commit -m "Update CHANGELOG in develop - version $NEW_VERSION" || true
+
+                        git remote set-url origin https://AlfredoVG77:${GITHUB_TOKEN}@github.com/AlfredoVG77/cp1-4-res.git
+                        git push origin develop
+
+                        echo "=== Promocionando a master ==="
+
+                        git fetch origin master
+                        git checkout master
+                        
+                        # Mantener Jenkinsfile de master
+			git rm --cached Jenkinsfile
+                        git checkout origin/master -- Jenkinsfile
+
+                        git merge origin/develop
+
+                        git commit -m "Promoción a master - versión $NEW_VERSION" || true
+                        git push origin master
+                    '''
+                }
+            }
+        }
+
+    }
+}
