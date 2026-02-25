@@ -17,7 +17,7 @@ pipeline {
 		hostname
         '''
 
-        git branch: 'master', url: 'https://github.com/AlfredoVG77/cp1-4-res.git'
+        git branch: 'master', url: 'https://github.com/AlfredoVG77/todo-list-aws.git'
 
         stash name: 'code', includes: '**/*'
     }
