@@ -17,7 +17,7 @@ pipeline {
                     hostname
                 '''
 
-                git branch: 'develop', url: 'https://github.com/AlfredoVG77/cp1-4-res.git'
+                git branch: 'develop', url: 'https://github.com/AlfredoVG77/todo-list-aws.git'
 
                 stash name: 'code', includes: '**/*'
             }
@@ -139,7 +139,7 @@ stage('Promote to master') {
                 git add CHANGELOG.md
                 git commit -m "Update CHANGELOG in develop - version $NEW_VERSION" || true
 
-                git remote set-url origin https://AlfredoVG77:${GITHUB_TOKEN}@github.com/AlfredoVG77/cp1-4-res.git
+                git remote set-url origin https://AlfredoVG77:${GITHUB_TOKEN}@github.com/AlfredoVG77/todo-list-aws.git
                 git push origin develop
 
 		echo "=== Promocionando a master ==="
